@@ -28,6 +28,7 @@ class ChatProvider extends ChangeNotifier {
   // Method untuk reload chat saat ganti character
   Future<void> switchCharacter() async {
     _messages.clear();
+    _isTyping = false; // Pengaman: Reset status mengetik dari karakter sebelumnya
     _isLoading = true;
     notifyListeners();
 
@@ -80,6 +81,9 @@ class ChatProvider extends ChangeNotifier {
   Future<void> sendMessage(String content) async {
     if (content.trim().isEmpty) return;
 
+    // Ambil ID karakter pengirim secara lokal di awal untuk pengaman asinkron (race conditions)
+    final String sendingCharacterId = CharacterConfig.current.id;
+
     // Rate limiting - cegah spam chat
     final now = DateTime.now();
     if (_lastMessageTime != null &&
@@ -107,7 +111,7 @@ class ChatProvider extends ChangeNotifier {
     _messages.add(userMessage);
     await _dbHelper.insertMessage(
       userMessage,
-      characterId: CharacterConfig.current.id,
+      characterId: sendingCharacterId,
     );
     notifyListeners();
 
@@ -123,21 +127,54 @@ class ChatProvider extends ChangeNotifier {
         _messages,
       );
 
-      final aiMessage = Message(
-        content: response,
-        isUser: false,
-        timestamp: DateTime.now(),
-        type: 'chat',
-      );
+      final parts = _splitAIResponse(response);
+      _isTyping = false; // Turn off initial typing indicator
 
-      _messages.add(aiMessage);
-      await _dbHelper.insertMessage(
-        aiMessage,
-        characterId: CharacterConfig.current.id,
-      );
+      for (var i = 0; i < parts.length; i++) {
+        final partContent = parts[i];
 
-      // Cek apakah perlu update profile user
-      await _checkAndUpdateProfile(content, response);
+        final aiMessage = Message(
+          content: partContent,
+          isUser: false,
+          timestamp: DateTime.now(),
+          type: 'chat',
+        );
+
+        // Simpan ke database lokal pengirim terlebih dahulu (selalu aman)
+        await _dbHelper.insertMessage(
+          aiMessage,
+          characterId: sendingCharacterId,
+        );
+
+        // Hanya perbarui UI dan daftar memori chat jika user BELUM beralih karakter ke karakter lain
+        if (CharacterConfig.current.id == sendingCharacterId) {
+          _messages.add(aiMessage);
+          notifyListeners();
+        }
+
+        // Tampilkan typing indicator kembali jika masih ada bubble berikutnya
+        if (i < parts.length - 1) {
+          if (CharacterConfig.current.id == sendingCharacterId) {
+            _isTyping = true;
+            notifyListeners();
+          }
+
+          // Delay pengetikan dinamis (12ms per karakter, batas antara 800ms s.d. 1800ms)
+          final delayMs = (parts[i + 1].length * 12).clamp(800, 1800);
+          await Future.delayed(Duration(milliseconds: delayMs));
+
+          if (CharacterConfig.current.id == sendingCharacterId) {
+            _isTyping = false;
+          }
+        }
+      }
+
+      // Cek apakah perlu update profile user (menggunakan response penuh)
+      if (CharacterConfig.current.id == sendingCharacterId) {
+        await _checkAndUpdateProfile(content, response);
+        _isTyping = false;
+        notifyListeners();
+      }
     } catch (e) {
       final errorMessage = Message(
         content:
@@ -147,54 +184,153 @@ class ChatProvider extends ChangeNotifier {
         type: 'chat',
       );
 
-      _messages.add(errorMessage);
       await _dbHelper.insertMessage(
         errorMessage,
-        characterId: CharacterConfig.current.id,
+        characterId: sendingCharacterId,
       );
-    }
 
-    _isTyping = false;
-    notifyListeners();
+      if (CharacterConfig.current.id == sendingCharacterId) {
+        _messages.add(errorMessage);
+        _isTyping = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> _checkAndUpdateProfile(
     String userMessage,
     String aiResponse,
   ) async {
-    // Logic sederhana untuk extract info dari percakapan
-    final lowerMessage = userMessage.toLowerCase();
+    final lowerMessage = userMessage.toLowerCase().trim();
+    bool updated = false;
 
-    if (_userProfile == null &&
-        (lowerMessage.contains('nama') || lowerMessage.contains('aku'))) {
-      // Extract nama dari pesan pertama
-      final words = userMessage.split(' ');
-      String? name;
+    // Load or initialize user profile
+    UserProfile currentProfile = _userProfile ?? UserProfile(
+      name: 'User',
+      nickname: 'User',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
 
-      for (int i = 0; i < words.length - 1; i++) {
-        if (words[i].toLowerCase() == 'nama' &&
-            words[i + 1].toLowerCase() == 'aku') {
-          if (i + 2 < words.length) {
-            name = words[i + 2];
-            break;
-          }
-        } else if (words[i].toLowerCase() == 'aku') {
-          name = words[i + 1];
+    List<String> newInterests = List.from(currentProfile.interests);
+    List<String> newRoutines = List.from(currentProfile.dailyRoutine);
+    Map<String, String> newPersonalInfo = Map.from(currentProfile.personalInfo);
+    String? newName = currentProfile.name == 'User' ? null : currentProfile.name;
+    String? newNickname = currentProfile.nickname == 'User' ? null : currentProfile.nickname;
+
+    // Helper functions to clean punctuation
+    String cleanValue(String val) {
+      return val.replaceAll(RegExp(r'[.!?~😊✨]+$'), '').trim();
+    }
+
+    // 1. EXTRACT NAME / NICKNAME
+    final nameRegexes = [
+      RegExp(r'\bnama\s+aku\s+([a-zA-Z\s]{2,15})\b'),
+      RegExp(r'\bnamaku\s+([a-zA-Z\s]{2,15})\b'),
+      RegExp(r'\bpanggil\s+aku\s+([a-zA-Z\s]{2,15})\b'),
+      RegExp(r'\bpanggil\s+aja\s+([a-zA-Z\s]{2,15})\b'),
+      RegExp(r'\bnama\s+gw\s+([a-zA-Z\s]{2,15})\b'),
+    ];
+
+    for (final regex in nameRegexes) {
+      final match = regex.firstMatch(lowerMessage);
+      if (match != null) {
+        final startIdx = match.start + match.group(0)!.indexOf(match.group(1)!);
+        final extractedName = cleanValue(userMessage.substring(startIdx, startIdx + match.group(1)!.length));
+        if (extractedName.isNotEmpty) {
+          newName = extractedName;
+          newNickname = extractedName;
+          updated = true;
           break;
         }
       }
+    }
 
-      if (name != null && name.isNotEmpty) {
-        _userProfile = UserProfile(
-          name: name,
-          nickname: name,
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        );
+    // 2. EXTRACT HOBBIES / INTERESTS
+    final interestRegexes = [
+      RegExp(r'\bhobi\s+aku\s+(?:adalah\s+)?([^,.]+)\b'),
+      RegExp(r'\bhobiku\s+(?:adalah\s+)?([^,.]+)\b'),
+      RegExp(r'\baku\s+suka\s+bermain\s+([^,.]+)\b'),
+      RegExp(r'\baku\s+suka\s+main\s+([^,.]+)\b'),
+      RegExp(r'\bsuka\s+nonton\s+([^,.]+)\b'),
+      RegExp(r'\blagi\s+tertarik\s+belajar\s+([^,.]+)\b'),
+    ];
 
-        await _dbHelper.saveUserProfile(_userProfile!);
-        notifyListeners();
+    for (final regex in interestRegexes) {
+      final match = regex.firstMatch(lowerMessage);
+      if (match != null) {
+        final startIdx = match.start + match.group(0)!.indexOf(match.group(1)!);
+        final interest = cleanValue(userMessage.substring(startIdx, startIdx + match.group(1)!.length));
+        if (interest.isNotEmpty && !newInterests.any((item) => item.toLowerCase() == interest.toLowerCase())) {
+          newInterests.add(interest);
+          updated = true;
+        }
       }
+    }
+
+    // 3. EXTRACT ROUTINE
+    final routineRegexes = [
+      RegExp(r'\bsetiap\s+pagi\s+aku\s+([^,.]+)\b'),
+      RegExp(r'\bsetiap\s+hari\s+aku\s+([^,.]+)\b'),
+      RegExp(r'\bbiasanya\s+tiap\s+malam\s+aku\s+([^,.]+)\b'),
+      RegExp(r'\bsetiap\s+weekend\s+aku\s+([^,.]+)\b'),
+    ];
+
+    for (final regex in routineRegexes) {
+      final match = regex.firstMatch(lowerMessage);
+      if (match != null) {
+        final startIdx = match.start + match.group(0)!.indexOf(match.group(1)!);
+        final routine = cleanValue(userMessage.substring(startIdx, startIdx + match.group(1)!.length));
+        if (routine.isNotEmpty && !newRoutines.any((item) => item.toLowerCase() == routine.toLowerCase())) {
+          newRoutines.add(routine);
+          updated = true;
+        }
+      }
+    }
+
+    // 4. EXTRACT PERSONAL INFO (Age, Location, Favorite Food, etc.)
+    // Age
+    final ageRegex = RegExp(r'\bumur\s+aku\s+(\d+\s*(?:tahun)?)\b');
+    final ageMatch = ageRegex.firstMatch(lowerMessage);
+    if (ageMatch != null) {
+      final age = cleanValue(ageMatch.group(1)!);
+      newPersonalInfo['Umur'] = age;
+      updated = true;
+    }
+
+    // Location/City
+    final locationRegex = RegExp(r'\btinggal\s+di\s+([a-zA-Z\s]{3,15})\b');
+    final locationMatch = locationRegex.firstMatch(lowerMessage);
+    if (locationMatch != null) {
+      final startIdx = locationMatch.start + locationMatch.group(0)!.indexOf(locationMatch.group(1)!);
+      final city = cleanValue(userMessage.substring(startIdx, startIdx + locationMatch.group(1)!.length));
+      newPersonalInfo['Kota asal'] = city;
+      updated = true;
+    }
+
+    // Favorite Food
+    final foodRegex = RegExp(r'\bmakanan\s+favoritku\s+(?:adalah\s+)?([^,.]+)\b');
+    final foodMatch = foodRegex.firstMatch(lowerMessage);
+    if (foodMatch != null) {
+      final startIdx = foodMatch.start + foodMatch.group(0)!.indexOf(foodMatch.group(1)!);
+      final food = cleanValue(userMessage.substring(startIdx, startIdx + foodMatch.group(1)!.length));
+      newPersonalInfo['Makanan Favorit'] = food;
+      updated = true;
+    }
+
+    if (updated) {
+      _userProfile = currentProfile.copyWith(
+        name: newName ?? currentProfile.name,
+        nickname: newNickname ?? currentProfile.nickname,
+        interests: newInterests,
+        dailyRoutine: newRoutines,
+        personalInfo: newPersonalInfo,
+        updatedAt: DateTime.now(),
+      );
+
+      await _dbHelper.saveUserProfile(_userProfile!);
+      notifyListeners();
+      print('👤 Dynamic User Profile Updated: ${_userProfile!.toJson()}');
     }
   }
 
@@ -220,5 +356,33 @@ class ChatProvider extends ChangeNotifier {
     // Implementasi untuk clear chat jika diperlukan
     _messages.clear();
     notifyListeners();
+  }
+
+  /// Helper to split AI response into multiple logical bubbles (intro vs content)
+  List<String> _splitAIResponse(String text) {
+    final paragraphs = text.split('\n\n')
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+
+    if (paragraphs.length <= 1) return [text];
+
+    List<String> result = [];
+
+    // Jika bagian pertama pendek (misal intro/salam), jadikan bubble pembuka tersendiri
+    if (paragraphs[0].length < 130) {
+      result.add(paragraphs[0]);
+      if (paragraphs.length > 2) {
+        result.add(paragraphs.sublist(1).join('\n\n'));
+      } else {
+        result.add(paragraphs[1]);
+      }
+    } else {
+      // Jika bagian pertama panjang, batasi menjadi maksimal 2 bubble agar tidak spam
+      result.add(paragraphs[0]);
+      result.add(paragraphs.sublist(1).join('\n\n'));
+    }
+
+    return result;
   }
 }

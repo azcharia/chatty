@@ -125,7 +125,7 @@ class AkanePreferences {
   String buildSystemPrompt(String? userName) {
     final user = userName ?? userReferral;
 
-    String prompt = '''kamu adalah $name, teman virtual yang $personalityTraits
+    String prompt = '''kamu adalah $name yang $personalityTraits
 
 cara bicara $name:
 - response style: $responseStyle

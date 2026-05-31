@@ -152,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               Colors.purple.shade300,
                             ],
                             description:
-                                'Teman virtual yang ceria, brief, dan natural. Suka ngobrol santai dengan style yang friendly.',
+                                'Teman bicara yang ceria, brief, dan natural. Suka ngobrol santai dengan style yang friendly.',
                           ),
 
                           const SizedBox(height: 20),
@@ -177,7 +177,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 FadeTransition(
                   opacity: _fadeAnimation,
                   child: Text(
-                    'Powered by Groq + Kimi K2 🌙⚡',
+                    'Powered by OpenRouter + Owl Alpha 🦉⚡',
                     style: Theme.of(
                       context,
                     ).textTheme.bodySmall?.copyWith(color: Colors.grey[500]),

@@ -12,12 +12,36 @@ import 'services/ayasha_preferences_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize services
-  await NotificationService().initialize();
-  await ReminderService().initialize();
-  await AkanePreferencesService().initialize();
-  await AyashaPreferencesService().initialize();
-  await CharacterConfig.loadCurrentCharacter();
+  // Initialize services with try-catch safety guards to prevent native crashes on startup
+  try {
+    await NotificationService().initialize();
+  } catch (e) {
+    debugPrint('NotificationService init error: $e');
+  }
+
+  try {
+    await ReminderService().initialize();
+  } catch (e) {
+    debugPrint('ReminderService init error: $e');
+  }
+
+  try {
+    await AkanePreferencesService().initialize();
+  } catch (e) {
+    debugPrint('AkanePreferencesService init error: $e');
+  }
+
+  try {
+    await AyashaPreferencesService().initialize();
+  } catch (e) {
+    debugPrint('AyashaPreferencesService init error: $e');
+  }
+
+  try {
+    await CharacterConfig.loadCurrentCharacter();
+  } catch (e) {
+    debugPrint('CharacterConfig load error: $e');
+  }
 
   runApp(const ChattyApp());
 }

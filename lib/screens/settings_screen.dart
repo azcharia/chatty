@@ -283,8 +283,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       children: [
                         _buildActionTile(
                           icon: Icons.api,
-                          title: 'Groq API Configuration',
-                          subtitle: 'Setup API key untuk Kimi K2 model',
+                          title: 'OpenRouter API Configuration',
+                          subtitle: 'Setup API key untuk Owl Alpha model',
                           onTap: () {
                             Navigator.push(
                               context,
@@ -378,7 +378,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Powered by Groq + Kimi K2',
+                            'Powered by OpenRouter + Owl Alpha',
                             style: Theme.of(
                               context,
                             ).textTheme.bodySmall?.copyWith(color: Colors.grey),

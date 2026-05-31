@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
@@ -13,6 +14,10 @@ class NotificationService {
 
   /// Initialize notification service
   Future<void> initialize() async {
+    if (kIsWeb) {
+      _initialized = true;
+      return;
+    }
     if (_initialized) return;
 
     // Initialize timezone
@@ -83,12 +88,18 @@ class NotificationService {
     required DateTime scheduledDate,
     String? payload,
   }) async {
+    if (kIsWeb) return;
     if (!_initialized) await initialize();
 
     // Don't schedule past notifications
     if (scheduledDate.isBefore(DateTime.now())) return;
 
-    const androidDetails = AndroidNotificationDetails(
+    // Pengaman: set ke true agar menggunakan suara default sistem bawaan perangkat.
+    // Jika kamu sudah meletakkan file 'notification_sound.mp3' di 'android/app/src/main/res/raw/'
+    // dan 'notification_sound.aiff' di bundle iOS, silakan ubah nilai ini menjadi false.
+    const bool useSystemDefaultSound = true;
+
+    final androidDetails = AndroidNotificationDetails(
       'reminder_channel',
       'Reminders',
       channelDescription: 'Notifications for reminders set by Akane',
@@ -96,17 +107,20 @@ class NotificationService {
       priority: Priority.high,
       showWhen: true,
       icon: '@mipmap/ic_launcher',
-      sound: RawResourceAndroidNotificationSound('notification_sound'),
+      playSound: true,
+      sound: useSystemDefaultSound
+          ? null
+          : const RawResourceAndroidNotificationSound('notification_sound'),
     );
 
-    const iosDetails = DarwinNotificationDetails(
+    final iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
-      sound: 'notification_sound.aiff',
+      sound: useSystemDefaultSound ? null : 'notification_sound.aiff',
     );
 
-    const notificationDetails = NotificationDetails(
+    final notificationDetails = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
@@ -131,6 +145,7 @@ class NotificationService {
     required String body,
     String? payload,
   }) async {
+    if (kIsWeb) return;
     if (!_initialized) await initialize();
 
     const androidDetails = AndroidNotificationDetails(
@@ -164,21 +179,25 @@ class NotificationService {
 
   /// Cancel a scheduled notification
   Future<void> cancelNotification(int id) async {
+    if (kIsWeb) return;
     await _notifications.cancel(id);
   }
 
   /// Cancel all notifications
   Future<void> cancelAllNotifications() async {
+    if (kIsWeb) return;
     await _notifications.cancelAll();
   }
 
   /// Get pending notifications
   Future<List<PendingNotificationRequest>> getPendingNotifications() async {
+    if (kIsWeb) return [];
     return await _notifications.pendingNotificationRequests();
   }
 
   /// Check if notifications are enabled
   Future<bool> areNotificationsEnabled() async {
+    if (kIsWeb) return false;
     final androidImplementation =
         _notifications
             .resolvePlatformSpecificImplementation<

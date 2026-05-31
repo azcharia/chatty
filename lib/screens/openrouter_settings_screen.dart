@@ -7,20 +7,22 @@ import '../config/api_config.dart';
 import '../config/character_config.dart';
 import '../services/llm_service.dart';
 
-class GroqSettingsScreen extends StatefulWidget {
-  const GroqSettingsScreen({super.key});
+class OpenRouterSettingsScreen extends StatefulWidget {
+  const OpenRouterSettingsScreen({super.key});
 
   @override
-  State<GroqSettingsScreen> createState() => _GroqSettingsScreenState();
+  State<OpenRouterSettingsScreen> createState() => _OpenRouterSettingsScreenState();
 }
 
-class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
+class _OpenRouterSettingsScreenState extends State<OpenRouterSettingsScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
+  final TextEditingController _tavilyApiKeyController = TextEditingController();
   final TextEditingController _maxTokensController = TextEditingController();
   final LLMService _llmService = LLMService();
 
   bool _isLoading = false;
   bool _obscureApiKey = true;
+  bool _obscureTavilyApiKey = true;
 
   @override
   void initState() {
@@ -31,6 +33,7 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
   @override
   void dispose() {
     _apiKeyController.dispose();
+    _tavilyApiKeyController.dispose();
     _maxTokensController.dispose();
     super.dispose();
   }
@@ -41,14 +44,18 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     final currentCharacter = CharacterConfig.current;
 
-    setState(() {
-      _apiKeyController.text =
-          prefs.getString(currentCharacter.apiKeyPref) ?? '';
-      _maxTokensController.text =
-          prefs.getInt('max_tokens')?.toString() ??
-          ApiConfig.recommendedMaxTokens.toString();
-      _isLoading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _apiKeyController.text =
+            prefs.getString(currentCharacter.apiKeyPref) ?? '';
+        _tavilyApiKeyController.text =
+            prefs.getString('tavily_api_key') ?? '';
+        _maxTokensController.text =
+            prefs.getInt('max_tokens')?.toString() ??
+            ApiConfig.recommendedMaxTokens.toString();
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _saveSettings() async {
@@ -60,6 +67,10 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
       await prefs.setString(
         currentCharacter.apiKeyPref,
         _apiKeyController.text,
+      );
+      await prefs.setString(
+        'tavily_api_key',
+        _tavilyApiKeyController.text,
       );
       await prefs.setInt(
         'max_tokens',
@@ -74,7 +85,9 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
     } catch (e) {
       _showSnackBar('❌ Gagal menyimpan settings: $e', isError: true);
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -87,21 +100,21 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
 
       // Basic validation
       if (_apiKeyController.text.isEmpty ||
-          _apiKeyController.text == 'YOUR_GROQ_API_KEY_HERE') {
-        _showSnackBar('❌ API Key Groq diperlukan', isError: true);
+          _apiKeyController.text == 'YOUR_OPENROUTER_API_KEY_HERE') {
+        _showSnackBar('❌ API Key OpenRouter diperlukan', isError: true);
         return;
       }
 
-      if (!_apiKeyController.text.startsWith('gsk_')) {
-        _showSnackBar('❌ API Key harus dimulai dengan "gsk_"', isError: true);
+      if (!_apiKeyController.text.startsWith('sk-or-')) {
+        _showSnackBar('❌ API Key harus dimulai dengan "sk-or-"', isError: true);
         return;
       }
 
       // Test actual API call
-      final success = await _testGroqAPI();
+      final success = await _testOpenRouterAPI();
 
       if (success) {
-        _showSnackBar('✅ Koneksi berhasil! Siap chat dengan Akane!');
+        _showSnackBar('✅ Koneksi berhasil! Siap chat dengan ${CharacterConfig.current.name}!');
       } else {
         _showSnackBar(
           '❌ Test gagal. Periksa API key dan coba lagi.',
@@ -111,11 +124,13 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
     } catch (e) {
       _showSnackBar('❌ Test gagal: $e', isError: true);
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
-  Future<bool> _testGroqAPI() async {
+  Future<bool> _testOpenRouterAPI() async {
     try {
       final url = Uri.parse('${ApiConfig.baseUrl}/chat/completions');
 
@@ -133,6 +148,8 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
         url,
         headers: {
           'Authorization': 'Bearer ${_apiKeyController.text}',
+          'HTTP-Referer': 'https://github.com/user/chatty',
+          'X-OpenRouter-Title': 'Chatty - AI Companion',
           'Content-Type': 'application/json',
         },
         body: json.encode(requestBody),
@@ -140,9 +157,9 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
 
       developer.log(
         'Test API Response: ${response.statusCode}',
-        name: 'GroqSettings',
+        name: 'OpenRouterSettings',
       );
-      developer.log('Test API Body: ${response.body}', name: 'GroqSettings');
+      developer.log('Test API Body: ${response.body}', name: 'OpenRouterSettings');
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -150,12 +167,12 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
       } else {
         developer.log(
           'API Error: ${response.statusCode} - ${response.body}',
-          name: 'GroqSettings',
+          name: 'OpenRouterSettings',
         );
         return false;
       }
     } catch (e) {
-      developer.log('Test API Exception: $e', name: 'GroqSettings');
+      developer.log('Test API Exception: $e', name: 'OpenRouterSettings');
       return false;
     }
   }
@@ -209,7 +226,7 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
                             ),
                             const SizedBox(height: 12),
                             Text(
-                              '🌙 ${ApiConfig.modelName}',
+                              '🤖 ${ApiConfig.modelName}',
                               style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
@@ -252,7 +269,7 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
                                   const SizedBox(height: 4),
                                   Text(
                                     '• ${ApiConfig.rateLimitRPM} requests/minute\n'
-                                    '• ${ApiConfig.rateLimitRPD} requests/day\n'
+                                    '• ~${ApiConfig.rateLimitRPD} requests/day\n'
                                     '• ${ApiConfig.rateLimitTPM.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')} tokens/minute\n'
                                     '• ${ApiConfig.rateLimitTPD.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')} tokens/day',
                                     style: TextStyle(
@@ -282,7 +299,7 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
                                 const Icon(Icons.key, color: Colors.green),
                                 const SizedBox(width: 8),
                                 Text(
-                                  'Groq API Key',
+                                  'OpenRouter API Key',
                                   style: Theme.of(context).textTheme.titleMedium
                                       ?.copyWith(fontWeight: FontWeight.bold),
                                 ),
@@ -294,7 +311,7 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
                               obscureText: _obscureApiKey,
                               decoration: InputDecoration(
                                 labelText: 'API Key',
-                                hintText: 'gsk-xxxxxxxxxxxxxxxxxxxxxxxx',
+                                hintText: 'sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxx',
                                 border: const OutlineInputBorder(),
                                 suffixIcon: IconButton(
                                   icon: Icon(
@@ -305,6 +322,53 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
                                   onPressed:
                                       () => setState(
                                         () => _obscureApiKey = !_obscureApiKey,
+                                      ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Tavily API Key Section
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.search, color: Colors.blue),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Tavily API Key (Realtime Search)',
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _tavilyApiKeyController,
+                              obscureText: _obscureTavilyApiKey,
+                              decoration: InputDecoration(
+                                labelText: 'Tavily API Key',
+                                hintText: 'tvly-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+                                border: const OutlineInputBorder(),
+                                helperText: 'Digunakan untuk realtime web search (opsional)',
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscureTavilyApiKey
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                  ),
+                                  onPressed:
+                                      () => setState(
+                                        () => _obscureTavilyApiKey = !_obscureTavilyApiKey,
                                       ),
                                 ),
                               ),
@@ -407,9 +471,9 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              '1. Daftar gratis di https://console.groq.com\n'
-                              '2. Buat API key di menu "API Keys"\n'
-                              '3. Copy API key (format: gsk-...)\n'
+                              '1. Daftar gratis di https://openrouter.ai\n'
+                              '2. Buat API key di menu Dashboard -> Keys\n'
+                              '3. Copy API key (format: sk-or-v1-...)\n'
                               '4. Paste di field API Key di atas\n'
                               '5. Test connection dan save settings\n'
                               '6. Mulai chat dengan Akane!',
@@ -450,7 +514,7 @@ class _GroqSettingsScreenState extends State<GroqSettingsScreen> {
                             Text(
                               'Model: ${ApiConfig.model}\n'
                               'Base URL: ${ApiConfig.baseUrl}\n'
-                              'API Key Format: ${_apiKeyController.text.isNotEmpty ? (_apiKeyController.text.startsWith('gsk_') ? '✅ Valid' : '❌ Invalid (harus dimulai dengan gsk_)') : '❌ Empty'}',
+                              'API Key Format: ${_apiKeyController.text.isNotEmpty ? (_apiKeyController.text.startsWith('sk-or-') ? '✅ Valid' : '❌ Invalid (harus dimulai dengan sk-or-)') : '❌ Empty'}',
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontFamily: 'monospace',

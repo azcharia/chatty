@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/chat_provider.dart';
@@ -20,6 +21,7 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  int _prevMessageCount = 0;
 
   @override
   void initState() {
@@ -61,12 +63,30 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final character = CharacterConfig.current;
+    final activeColor = character.id == 'akane' ? Colors.pink.shade300 : Colors.blue.shade300;
+
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+            child: Container(
+              color: theme.colorScheme.surface.withValues(
+                alpha: isDark ? 0.5 : 0.7,
+              ),
+            ),
+          ),
+        ),
         title: Consumer<ChatProvider>(
           builder: (context, chatProvider, child) {
             final profile = chatProvider.userProfile;
-            final character = CharacterConfig.current;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -80,7 +100,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (profile != null)
                   Text(
                     'Chat dengan ${profile.nickname ?? profile.name}',
-                    style: Theme.of(context).textTheme.bodySmall,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
                   ),
               ],
             );
@@ -134,85 +156,158 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-      body: Consumer<ChatProvider>(
-        builder: (context, chatProvider, child) {
-          if (chatProvider.isLoading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          // Auto scroll to bottom when messages change
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _scrollToBottom();
-          });
-
-          return Column(
-            children: [
-              Expanded(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(16),
-                  reverse: true, // Start from bottom
-                  itemCount:
-                      chatProvider.messages.length +
-                      (chatProvider.isTyping ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index == 0 && chatProvider.isTyping) {
-                      return const TypingIndicator();
-                    }
-
-                    final messageIndex =
-                        chatProvider.isTyping ? index - 1 : index;
-                    final reversedIndex =
-                        chatProvider.messages.length - 1 - messageIndex;
-                    final message = chatProvider.messages[reversedIndex];
-                    return MessageBubble(message: message);
-                  },
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.1),
-                      blurRadius: 4,
-                      offset: const Offset(0, -2),
-                    ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: character.id == 'akane'
+                ? [
+                    Colors.pink.shade300.withValues(alpha: isDark ? 0.08 : 0.12),
+                    Colors.purple.shade300.withValues(alpha: isDark ? 0.08 : 0.12),
+                    theme.colorScheme.surface,
+                  ]
+                : [
+                    Colors.blue.shade300.withValues(alpha: isDark ? 0.08 : 0.12),
+                    Colors.teal.shade300.withValues(alpha: isDark ? 0.08 : 0.12),
+                    theme.colorScheme.surface,
                   ],
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        decoration: InputDecoration(
-                          hintText: 'Ketik pesan...',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
+          ),
+        ),
+        child: SafeArea(
+          top: false, // Let chat content flow behind AppBar
+          bottom: true,
+          child: Consumer<ChatProvider>(
+            builder: (context, chatProvider, child) {
+              if (chatProvider.isLoading) {
+                _prevMessageCount = 0; // Reset count on character switch / load
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              // Cek penambahan pesan baru secara pintar untuk menghindari yanking-bottom bug saat membaca chat lama
+              final currentCount = chatProvider.messages.length;
+              if (currentCount > _prevMessageCount) {
+                final isFirstLoad = _prevMessageCount == 0;
+                final isNearBottom = !_scrollController.hasClients || _scrollController.offset < 200.0;
+
+                if (isFirstLoad || isNearBottom) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _scrollToBottom();
+                  });
+                }
+                _prevMessageCount = currentCount;
+              }
+
+              return Column(
+                children: [
+                  Expanded(
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      padding: EdgeInsets.only(
+                        top: MediaQuery.paddingOf(context).top + kToolbarHeight + 16,
+                        left: 16,
+                        right: 16,
+                        bottom: 16,
+                      ),
+                      reverse: true, // Start from bottom
+                      itemCount:
+                          chatProvider.messages.length +
+                          (chatProvider.isTyping ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index == 0 && chatProvider.isTyping) {
+                          return const TypingIndicator();
+                        }
+
+                        final messageIndex =
+                            chatProvider.isTyping ? index - 1 : index;
+                        final reversedIndex =
+                            chatProvider.messages.length - 1 - messageIndex;
+                        final message = chatProvider.messages[reversedIndex];
+                        return MessageBubble(message: message);
+                      },
+                    ),
+                  ),
+                  ClipRect(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.surface.withValues(
+                            alpha: isDark ? 0.6 : 0.85,
                           ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
+                          border: Border(
+                            top: BorderSide(
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.1)
+                                  : Colors.black.withValues(alpha: 0.05),
+                              width: 1,
+                            ),
                           ),
                         ),
-                        maxLines: null,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _sendMessage(),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _messageController,
+                                decoration: InputDecoration(
+                                  hintText: 'Ketik pesan...',
+                                  filled: true,
+                                  fillColor: isDark
+                                      ? Colors.white.withValues(alpha: 0.05)
+                                      : Colors.black.withValues(alpha: 0.02),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(24),
+                                    borderSide: BorderSide(
+                                      color: isDark
+                                          ? Colors.white.withValues(alpha: 0.1)
+                                          : Colors.black.withValues(alpha: 0.08),
+                                    ),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(24),
+                                    borderSide: BorderSide(
+                                      color: isDark
+                                          ? Colors.white.withValues(alpha: 0.1)
+                                          : Colors.black.withValues(alpha: 0.08),
+                                    ),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(24),
+                                    borderSide: BorderSide(
+                                      color: activeColor,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                ),
+                                maxLines: null,
+                                textInputAction: TextInputAction.send,
+                                onSubmitted: (_) => _sendMessage(),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            FloatingActionButton(
+                              onPressed: _sendMessage,
+                              mini: true,
+                              backgroundColor: activeColor,
+                              foregroundColor: Colors.white,
+                              elevation: 2,
+                              child: const Icon(Icons.send),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    FloatingActionButton(
-                      onPressed: _sendMessage,
-                      mini: true,
-                      child: const Icon(Icons.send),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
       ),
     );
   }

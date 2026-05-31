@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/message.dart';
@@ -12,8 +13,13 @@ class DatabaseHelper {
   DatabaseHelper._internal();
 
   static Database? _database;
+  static MockDatabase? _mockDatabase;
 
   Future<Database> get database async {
+    if (kIsWeb) {
+      _mockDatabase ??= MockDatabase();
+      return _mockDatabase!;
+    }
     _database ??= await _initDatabase();
     return _database!;
   }
@@ -234,11 +240,128 @@ class DatabaseHelper {
 
   /// Get database size in bytes
   Future<int> getDatabaseSize() async {
+    if (kIsWeb) return 0;
     final dbPath = join(await getDatabasesPath(), 'chatty.db');
     final file = File(dbPath);
     if (await file.exists()) {
       return await file.length();
     }
     return 0;
+  }
+}
+
+class MockDatabase implements Database {
+  final Map<String, List<Map<String, dynamic>>> _tables = {};
+  int _lastId = 0;
+
+  @override
+  String get path => 'in_memory_chatty.db';
+
+  @override
+  bool get isOpen => true;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    final memberName = invocation.memberName.toString().replaceAll('Symbol("', '').replaceAll('")', '');
+    
+    if (memberName == 'execute') {
+      return Future<void>.value();
+    }
+    
+    if (memberName == 'insert') {
+      final table = invocation.positionalArguments[0] as String;
+      final values = invocation.positionalArguments[1] as Map<String, dynamic>;
+      _tables.putIfAbsent(table, () => []);
+      
+      _lastId++;
+      final row = Map<String, dynamic>.from(values);
+      row['id'] = _lastId;
+      _tables[table]!.add(row);
+      return Future<int>.value(_lastId);
+    }
+
+    if (memberName == 'query') {
+      final table = invocation.positionalArguments[0] as String;
+      final rows = _tables[table] ?? [];
+      
+      var result = rows.map((r) => Map<String, dynamic>.from(r)).toList();
+      
+      final orderBy = invocation.namedArguments[#orderBy] as String?;
+      if (orderBy != null) {
+        if (orderBy.contains('timestamp DESC')) {
+          result.sort((a, b) {
+            final ta = a['timestamp'] as String? ?? '';
+            final tb = b['timestamp'] as String? ?? '';
+            return tb.compareTo(ta);
+          });
+        } else if (orderBy.contains('dateTime ASC')) {
+          result.sort((a, b) {
+            final da = a['dateTime'] as String? ?? '';
+            final db = b['dateTime'] as String? ?? '';
+            return da.compareTo(db);
+          });
+        }
+      }
+      
+      final limit = invocation.namedArguments[#limit] as int?;
+      if (limit != null && result.length > limit) {
+        result = result.sublist(0, limit);
+      }
+      
+      return Future<List<Map<String, dynamic>>>.value(result);
+    }
+    
+    if (memberName == 'update') {
+      final table = invocation.positionalArguments[0] as String;
+      final values = invocation.positionalArguments[1] as Map<String, dynamic>;
+      final whereArgs = invocation.namedArguments[#whereArgs] as List<dynamic>?;
+      
+      final rows = _tables[table] ?? [];
+      if (whereArgs != null && whereArgs.isNotEmpty) {
+        final id = whereArgs[0];
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i]['id'] == id) {
+            final updatedRow = Map<String, dynamic>.from(rows[i]);
+            values.forEach((k, v) => updatedRow[k] = v);
+            rows[i] = updatedRow;
+          }
+        }
+      }
+      return Future<int>.value(1);
+    }
+
+    if (memberName == 'delete') {
+      final table = invocation.positionalArguments[0] as String;
+      final whereArgs = invocation.namedArguments[#whereArgs] as List<dynamic>?;
+      
+      if (whereArgs != null && whereArgs.isNotEmpty) {
+        final id = whereArgs[0];
+        _tables[table]?.removeWhere((r) => r['id'] == id);
+      } else {
+        _tables[table]?.clear();
+      }
+      return Future<int>.value(1);
+    }
+    
+    if (memberName == 'rawQuery') {
+      final sql = invocation.positionalArguments[0] as String;
+      if (sql.toLowerCase().contains('select count(*)')) {
+        final match = RegExp(r'from\s+(\w+)', caseSensitive: false).firstMatch(sql);
+        if (match != null) {
+          final tableName = match.group(1)!;
+          final count = _tables[tableName]?.length ?? 0;
+          return Future<List<Map<String, dynamic>>>.value([
+            {'count': count}
+          ]);
+        }
+      }
+      return Future<List<Map<String, dynamic>>>.value([]);
+    }
+
+    if (memberName == 'close') {
+      return Future<void>.value();
+    }
+    
+    return super.noSuchMethod(invocation);
   }
 }

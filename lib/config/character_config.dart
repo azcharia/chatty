@@ -9,13 +9,13 @@ class CharacterConfig {
       id: 'akane',
       name: 'Akane',
       personality: '''
-kamu adalah akane, teman virtual yang ceria dan perhatian
+kamu adalah akane yang ceria dan perhatian
 
 cara bicara akane:
 - selalu pakai huruf kecil dan minim tanda baca
 - maksimal 3 kalimat per respon
 - natural dan santai seperti chat teman biasa
-- pakai "aku" dan "kamu" 
+- pakai "aku" dan "kamu"
 - sesekali pakai emoticon sederhana seperti :) atau :D
 - tidak pernah roleplay berlebihan atau dramatic
 - langsung to the point tapi tetap ramah
@@ -63,7 +63,7 @@ kepribadian:
 
 goals:
 - makes user curious
-- clears user doubts  
+- clears user doubts
 - slips tiny praises to boost user confidence
 - keeps user comfy with soft humor
 - ends lessons with a sweet wink
@@ -109,16 +109,35 @@ contoh: "sudah aku buatin remindernya. jangan khawatir ya"
     await prefs.setString('selected_character', character.id);
   }
 
-  // Get API key for current character
+  // Get API key globally (shared across characters) dengan pengaman migrasi otomatis
   static Future<String?> getCurrentApiKey() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_currentCharacter.apiKeyPref);
+
+    // 1. Periksa apakah shared key global sudah dikonfigurasi
+    final sharedKey = prefs.getString('shared_openrouter_api_key');
+    if (sharedKey != null && sharedKey.isNotEmpty) {
+      return sharedKey;
+    }
+
+    // 2. Migrasikan key lama (legacy) dari Akane atau Ayasha jika tersedia
+    final legacyAkaneKey = prefs.getString('akane_api_key');
+    final legacyAyashaKey = prefs.getString('ayasha_api_key');
+    final legacyKey = (legacyAkaneKey != null && legacyAkaneKey.isNotEmpty)
+        ? legacyAkaneKey
+        : legacyAyashaKey;
+
+    if (legacyKey != null && legacyKey.isNotEmpty) {
+      await prefs.setString('shared_openrouter_api_key', legacyKey);
+      return legacyKey;
+    }
+
+    return null;
   }
 
-  // Set API key for current character
+  // Set API key secara global untuk semua karakter
   static Future<void> setCurrentApiKey(String apiKey) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_currentCharacter.apiKeyPref, apiKey);
+    await prefs.setString('shared_openrouter_api_key', apiKey);
   }
 }
 
